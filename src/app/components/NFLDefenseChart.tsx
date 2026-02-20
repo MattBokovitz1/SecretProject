@@ -15,8 +15,25 @@ import {
   PolarRadiusAxis,
   Radar,
 } from "recharts";
-import { useState, useEffect, useCallback } from "react";
-import { NFLDefenseStats } from "../services/nflStatsService";
+import { useEffect, useCallback } from "react";
+
+// Redux hooks and actions
+import { useAppSelector, useAppDispatch } from "../store/hooks";
+import { fetchNFLStats, setSelectedMetric, setTeam1, setTeam2 } from "../store/nflStatsSlice";
+
+// Selectors — each one reads or derives a specific piece of state
+import {
+  selectDefenseData,
+  selectLoading,
+  selectError,
+  selectSelectedMetric,
+  selectTeam1,
+  selectTeam2,
+  selectSortedData,
+  selectLogoMap,
+  selectRadarData,
+  selectTableData,
+} from "../store/selectors";
 
 // Custom Y-axis tick that renders team logo + abbreviation
 interface CustomTickProps {
@@ -70,109 +87,31 @@ const metrics: { key: MetricKey; label: string; color: string; gradient: [string
   { key: "dvoa", label: "Efficiency Rating", color: "#fbbf24", gradient: ["#f59e0b", "#d97706"] },
 ];
 
-// Prepare radar chart data for team comparison
-const getRadarData = (data: NFLDefenseStats[], team1: string, team2: string) => {
-  const t1 = data.find((t) => t.team === team1);
-  const t2 = data.find((t) => t.team === team2);
-
-  if (!t1 || !t2) return [];
-
-  // Normalize data (invert where lower is better)
-  const maxPoints = Math.max(...data.map((t) => t.pointsAllowed)) || 1;
-  const maxYards = Math.max(...data.map((t) => t.yardsAllowed)) || 1;
-  const maxSacks = Math.max(...data.map((t) => t.sacks)) || 1;
-  const maxInt = Math.max(...data.map((t) => t.interceptions)) || 1;
-  const maxFumbles = Math.max(...data.map((t) => t.fumbles)) || 1;
-
-  return [
-    {
-      stat: "Points Allowed",
-      [team1]: Math.round(((maxPoints - t1.pointsAllowed) / maxPoints) * 100),
-      [team2]: Math.round(((maxPoints - t2.pointsAllowed) / maxPoints) * 100),
-      fullMark: 100,
-    },
-    {
-      stat: "Yards Allowed",
-      [team1]: Math.round(((maxYards - t1.yardsAllowed) / maxYards) * 100),
-      [team2]: Math.round(((maxYards - t2.yardsAllowed) / maxYards) * 100),
-      fullMark: 100,
-    },
-    {
-      stat: "Sacks",
-      [team1]: Math.round((t1.sacks / maxSacks) * 100),
-      [team2]: Math.round((t2.sacks / maxSacks) * 100),
-      fullMark: 100,
-    },
-    {
-      stat: "Interceptions",
-      [team1]: Math.round((t1.interceptions / maxInt) * 100),
-      [team2]: Math.round((t2.interceptions / maxInt) * 100),
-      fullMark: 100,
-    },
-    {
-      stat: "Forced Fumbles",
-      [team1]: Math.round((t1.fumbles / maxFumbles) * 100),
-      [team2]: Math.round((t2.fumbles / maxFumbles) * 100),
-      fullMark: 100,
-    },
-  ];
-};
-
 export default function NFLDefenseChart() {
-  const [defenseData, setDefenseData] = useState<NFLDefenseStats[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedMetric, setSelectedMetric] = useState<MetricKey>("pointsAllowed");
-  const [team1, setTeam1] = useState("BAL");
-  const [team2, setTeam2] = useState("DAL");
+  // ── Read from Redux store via selectors ──
+  const defenseData    = useAppSelector(selectDefenseData);
+  const loading        = useAppSelector(selectLoading);
+  const error          = useAppSelector(selectError);
+  const selectedMetric = useAppSelector(selectSelectedMetric);
+  const team1          = useAppSelector(selectTeam1);
+  const team2          = useAppSelector(selectTeam2);
+  const sortedData     = useAppSelector(selectSortedData);     // memoized
+  const logoMap        = useAppSelector(selectLogoMap);         // memoized
+  const radarData      = useAppSelector(selectRadarData);       // memoized
+  const tableData      = useAppSelector(selectTableData);       // memoized
 
+  // ── Dispatch function ──
+  const dispatch = useAppDispatch();
+
+  // ── Fetch data on mount ──
+  // dispatch(fetchNFLStats()) kicks off the async thunk.
+  // The slice's extraReducers handle pending → fulfilled/rejected transitions.
   useEffect(() => {
-    async function fetchData() {
-      setLoading(true);
-      setError(null);
-      
-      try {
-        const response = await fetch("/api/nfl-stats");
-        
-        if (!response.ok) {
-          throw new Error(`Failed to fetch: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        if (data.stats && data.stats.length > 0) {
-          setDefenseData(data.stats);
-          // Set initial team selections
-          if (data.stats.length >= 2) {
-            setTeam1(data.stats[0].team);
-            setTeam2(data.stats[1].team);
-          }
-        } else {
-          throw new Error("No data received from API");
-        }
-      } catch (err) {
-        console.error("Error fetching NFL stats:", err);
-        setError(err instanceof Error ? err.message : "Failed to load data");
-      } finally {
-        setLoading(false);
-      }
-    }
+    dispatch(fetchNFLStats());
+  }, [dispatch]);
 
-    fetchData();
-  }, []);
-
+  // Current metric config object
   const currentMetric = metrics.find((m) => m.key === selectedMetric)!;
-  const sortedData = [...defenseData].sort((a, b) => {
-    if (selectedMetric === "pointsAllowed" || selectedMetric === "yardsAllowed") {
-      const diff = a[selectedMetric] - b[selectedMetric];
-      return diff !== 0 ? diff : a.team.localeCompare(b.team);
-    }
-    const diff = b[selectedMetric] - a[selectedMetric];
-    return diff !== 0 ? diff : a.team.localeCompare(b.team);
-  });
-
-  // Build a map of team abbreviation -> logo URL for the custom Y-axis tick
-  const logoMap = new Map(defenseData.map((t) => [t.team, t.logo]));
 
   // Memoised tick so Recharts gets a stable reference
   // Only re-create when the underlying data identity changes (not on metric switch)
@@ -183,8 +122,6 @@ export default function NFLDefenseChart() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [defenseData],
   );
-
-  const radarData = getRadarData(defenseData, team1, team2);
 
   if (loading) {
     return (
@@ -209,8 +146,8 @@ export default function NFLDefenseChart() {
           </div>
           <p className="text-red-400 text-lg font-semibold">Error loading data</p>
           <p className="mt-2 text-zinc-500 text-sm">{error}</p>
-          <button 
-            onClick={() => window.location.reload()} 
+          <button
+            onClick={() => dispatch(fetchNFLStats())}
             className="mt-6 px-5 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-all duration-200 shadow-lg shadow-blue-600/20"
           >
             Try Again
@@ -248,7 +185,7 @@ export default function NFLDefenseChart() {
           {metrics.map((metric) => (
             <button
               key={metric.key}
-              onClick={() => setSelectedMetric(metric.key)}
+              onClick={() => dispatch(setSelectedMetric(metric.key))}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                 selectedMetric === metric.key
                   ? "text-white shadow-lg scale-[1.02]"
@@ -335,7 +272,7 @@ export default function NFLDefenseChart() {
             </label>
             <select
               value={team1}
-              onChange={(e) => setTeam1(e.target.value)}
+              onChange={(e) => dispatch(setTeam1(e.target.value))}
               className="px-4 py-2.5 rounded-lg border border-white/[0.08] bg-white/[0.04] text-white text-sm focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all appearance-none cursor-pointer"
             >
               {defenseData.map((team) => (
@@ -354,7 +291,7 @@ export default function NFLDefenseChart() {
             </label>
             <select
               value={team2}
-              onChange={(e) => setTeam2(e.target.value)}
+              onChange={(e) => dispatch(setTeam2(e.target.value))}
               className="px-4 py-2.5 rounded-lg border border-white/[0.08] bg-white/[0.04] text-white text-sm focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all appearance-none cursor-pointer"
             >
               {defenseData.map((team) => (
@@ -446,9 +383,7 @@ export default function NFLDefenseChart() {
             </tr>
           </thead>
           <tbody>
-            {[...defenseData]
-              .sort((a, b) => a.pointsAllowed - b.pointsAllowed)
-              .map((team, index) => (
+            {tableData.map((team, index) => (
                 <tr
                   key={team.team}
                   className="border-b border-white/[0.03] hover:bg-white/[0.03] transition-colors group"
