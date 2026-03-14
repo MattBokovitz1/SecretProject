@@ -80,7 +80,7 @@ export async function GET() {
       source: "ESPN API - 2024 Season",
     });
   } catch (error) {
-    console.error("Error in NFL stats API:", error);
+    console.error("Error in NFL stats API:", error instanceof Error ? error.message : String(error));
     return NextResponse.json(
       { error: "Failed to fetch NFL statistics", stats: [] },
       { status: 500 }
@@ -266,7 +266,7 @@ async function fetchTeamDetailedStats(team: {
 
     return base;
   } catch (err) {
-    console.error(`Failed to fetch stats for ${team.abbr}:`, err);
+    console.error(`Failed to fetch stats for ${team.abbr}:`, err instanceof Error ? err.message : String(err));
     return base;
   }
 }

@@ -121,9 +121,9 @@ export async function fetchDefensiveStatistics(season: number = 2025): Promise<N
     // Fetch individual team stats
     const statsPromises = teamRefs.map(async (ref: string) => {
       try {
-        // Get team ID from ref
+        // Get team ID from ref — validate it is strictly numeric to prevent SSRF
         const teamId = ref.match(/teams\/(\d+)/)?.[1];
-        if (!teamId) return null;
+        if (!teamId || !/^\d+$/.test(teamId)) return null;
 
         // Fetch team statistics
         const statsUrl = `https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/${season}/types/2/teams/${teamId}/statistics`;
